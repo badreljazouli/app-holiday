@@ -1,7 +1,7 @@
 /* Carnet de poche — fonctionne hors connexion.
    Page : réseau d'abord (toujours la dernière version quand on est en ligne), cache sinon.
    Polices et images : cache d'abord, rafraîchies en arrière-plan. */
-var CACHE = 'carnet-poche-2.0';
+var CACHE = 'carnet-poche-2.1';
 var SHELL = ['./', './index.html', './manifest.webmanifest', './apple-touch-icon.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (e) {

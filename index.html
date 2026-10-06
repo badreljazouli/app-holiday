@@ -174,6 +174,15 @@ h1,h2,h3{text-wrap:balance}
 .seg-s button{min-height:34px;font-size:13px}
 .ico{width:40px;height:40px;border-radius:12px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center}
 .ty-act{background:var(--soft);color:var(--acc-ink)}.ty-trajet{background:var(--tr-bg);color:var(--tr-fg)}.ty-repas{background:var(--rp-bg);color:var(--rp-fg)}.ty-detente{background:var(--dt-bg);color:var(--dt-fg)}
+.bg{border-top:1px solid var(--line);padding:2px 0 12px}
+.bg:first-child{border-top:0}
+.bg-head{width:100%;display:flex;align-items:center;gap:10px;min-height:58px;border:0;background:none;padding:8px 0 10px;cursor:pointer;text-align:left;color:var(--fg)}
+.bg-head:active{opacity:.6}
+.bg-chev{display:inline-flex;transition:transform .2s}
+.bg.open .bg-chev{transform:rotate(180deg)}
+.bg-body{margin-top:10px;padding:2px 12px 12px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line);display:flex;flex-direction:column;gap:8px;animation:fade .2s ease}
+.bg-body .li-main{min-height:54px}
+.chip-s{min-width:0;min-height:30px;padding:0 9px;font-size:11px}
 .tl{position:relative;display:flex;gap:12px;align-items:flex-start;padding-bottom:14px}
 .tl::before{content:'';position:absolute;left:21px;top:56px;bottom:2px;width:2px;background:var(--faint)}
 .tl.last{padding-bottom:0}.tl.last::before{display:none}
@@ -281,7 +290,7 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
 <script>
 (function () {
   'use strict';
-  var VERSION = '2.0 · 6 oct. 2026';
+  var VERSION = '2.1 · 6 oct. 2026';
   var $root = document.getElementById('root'), $sheet = document.getElementById('sheet-root'), $toast = document.getElementById('toast-root');
   var docEl = document.documentElement;
 
@@ -395,7 +404,7 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
   function save() { storageOk = lsSet(KEY, JSON.stringify(data)); }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () { }); } catch (e) { }
 
-  var ui = { sel: null, tab: 'apercu', day: null, hideDone: false, expFilter: 'all', expStop: 'all', budView: 'cat', sheet: null, form: {}, idea: '', conv: { eur: '', loc: '' }, animFlaps: true, scrollDay: true, confirmReset: false };
+  var ui = { sel: null, tab: 'apercu', day: null, hideDone: false, expFilter: 'all', expStop: 'all', budView: 'cat', sheet: null, form: {}, idea: '', conv: { eur: '', loc: '' }, openCats: {}, openStops: {}, animFlaps: true, scrollDay: true, confirmReset: false };
   try { var su = JSON.parse(lsGet('carnet-poche-ui') || '{}'); ['sel', 'tab', 'hideDone', 'budView', 'lastCur'].forEach(function (k) { if (su[k] != null) ui[k] = su[k]; }); } catch (e) { }
   function saveUi() { lsSet('carnet-poche-ui', JSON.stringify({ sel: ui.sel, tab: ui.tab, hideDone: ui.hideDone, budView: ui.budView, lastCur: ui.lastCur })); }
 
@@ -631,15 +640,43 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
 
     var isStop = ui.budView === 'stop' && c.hasStops;
     var maxStop = 1, stopSums = c.stopRows.map(function (x) { var v = tr.expenses.filter(function (e) { return c.sid(e) === x.id; }).reduce(function (s, e) { return s + c.toEur(e); }, 0); if (v > maxStop) maxStop = v; return Object.assign({}, x, { v: v }); });
-    var breakdown = '<div class="card pad"><div class="c-head" style="align-items:center"><h2 class="h2">Répartition</h2></div>' +
-      (c.hasStops ? '<div class="seg" style="margin-bottom:14px"><button class="' + (isStop ? '' : 'on') + '" data-act="bud-view" data-arg="cat">Par poste</button><button class="' + (isStop ? 'on' : '') + '" data-act="bud-view" data-arg="stop">Par étape</button></div>' : '') +
-      '<div style="display:flex;flex-direction:column;gap:14px">' +
-      (isStop ? stopSums.filter(function (x) { return x.id !== '' || x.v > 0; }).map(function (x) {
-        return '<div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span class="dot" style="background:' + x.color + '"></span><span style="flex:1;min-width:0"><span class="b">' + esc(x.name) + '</span><span class="muted sm"> · ' + (x.id === '' ? 'vols & divers' : pl(x.nights, 'nuit', 'nuits') + (x.nights && x.v ? ' · ' + eur(x.v / x.nights) + '/nuit' : '')) + '</span></span><span class="num b">' + eur(x.v) + '</span></div><div class="bar"><span style="background:' + x.color + ';width:' + (x.v / maxStop * 100).toFixed(1) + '%"></span></div></div>';
-      }).join('') : c.catSums.map(function (k) {
+    function sortExp(list) { return list.slice().sort(function (a, b) { var x = a.date || '', y = b.date || ''; if (x !== y) return x < y ? 1 : -1; return (b.order || 0) - (a.order || 0); }); }
+    function bgroup(o) {
+      return '<div class="bg' + (o.open ? ' open' : '') + '">' +
+        '<button class="bg-head" data-act="' + o.act + '" data-arg="' + esc(o.key) + '" aria-expanded="' + (o.open ? 'true' : 'false') + '">' + o.icon +
+        '<span style="flex:1;min-width:0"><span class="b" style="display:block">' + esc(o.title) + '</span><span class="muted sm">' + esc(o.sub) + '</span></span>' +
+        '<span class="num b ' + (o.over ? 'urgent' : '') + '">' + o.amount + '</span><span class="bg-chev muted">' + IC.chevD + '</span></button>' +
+        '<div class="bar"><span style="background:' + o.barColor + ';width:' + o.pct.toFixed(1) + '%"></span></div>' +
+        (o.open ? '<div class="bg-body">' + (o.items.length ? '<div>' + o.items.map(function (e) { return expRowC(c, e, isStop ? 'stop' : 'cat'); }).join('') + '</div>' : '<p class="muted sm" style="margin:8px 0">Aucune ligne pour l’instant.</p>') + (o.extra || '') +
+          '<button class="btn btn-g btn-s btn-w" data-act="' + o.addAct + '" data-arg="' + esc(o.addArg) + '">' + IC.plusS + 'Ajouter dans « ' + esc(o.title) + ' »</button></div>' : '') +
+        '</div>';
+    }
+    var groupsHtml, anyOpen;
+    if (isStop) {
+      groupsHtml = stopSums.filter(function (x) { return x.id !== '' || x.v > 0; }).map(function (x) {
+        var items = sortExp(tr.expenses.filter(function (e) { return c.sid(e) === x.id; })), key = x.id || '_';
+        return bgroup({ key: key, act: 'toggle-stop', open: !!ui.openStops[key], title: x.name, items: items, amount: eur(x.v), over: false, barColor: x.color, pct: x.v / maxStop * 100,
+          icon: '<span class="ico" style="width:36px;height:36px;border-radius:11px;background:var(--surface-2)"><span class="dot" style="width:12px;height:12px;background:' + x.color + '"></span></span>',
+          sub: (x.id === '' ? 'vols & divers' : pl(x.nights, 'nuit', 'nuits') + (x.nights && x.v ? ' · ' + eur(x.v / x.nights) + '/nuit' : '')) + ' · ' + pl(items.length, 'ligne', 'lignes'),
+          addAct: 'new-exp-stop', addArg: x.id });
+      }).join('');
+      anyOpen = Object.keys(ui.openStops).some(function (k) { return ui.openStops[k]; });
+    } else {
+      groupsHtml = c.catSums.slice().sort(function (a, b) { return b.v - a.v; }).map(function (k) {
+        var items = sortExp(tr.expenses.filter(function (e) { return e.cat === k.k; }));
         var p = num(tr.plan[k.k]), over = p > 0 && k.v > p, pct = p > 0 ? Math.min(100, k.v / p * 100) : (c.projected ? k.v / c.projected * 100 : 0);
-        return '<div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="color:' + k.c + ';display:inline-flex">' + catIcon(k, 18) + '</span><span class="b" style="flex:1;min-width:0">' + esc(k.l) + '</span><span class="num b ' + (over ? 'urgent' : '') + '">' + eur(k.v) + '</span><span class="muted sm">/</span><input class="field num" style="width:84px;min-height:38px;padding:0 8px;text-align:right" type="text" inputmode="decimal" placeholder="—" aria-label="Enveloppe ' + esc(k.l) + '" data-k="plan-' + k.k + '" data-plan="' + k.k + '" value="' + esc(tr.plan[k.k] || '') + '"></div><div class="bar"><span style="background:' + (over ? 'var(--danger)' : k.c) + ';width:' + pct.toFixed(1) + '%"></span></div></div>';
-      }).join('') + '<p class="muted sm" style="margin:0">À droite de chaque poste : une enveloppe en euros pour suivre un plafond.</p>') + '</div></div>';
+        var share = c.projected ? Math.round(k.v / c.projected * 100) + ' % du total' : '';
+        return bgroup({ key: k.k, act: 'toggle-cat', open: !!ui.openCats[k.k], title: k.l, items: items, amount: eur(k.v), over: over, barColor: over ? 'var(--danger)' : k.c, pct: pct,
+          icon: '<span class="ico" style="width:36px;height:36px;border-radius:11px;background:var(--surface-2);color:' + k.c + '">' + catIcon(k, 18) + '</span>',
+          sub: [pl(items.length, 'ligne', 'lignes'), p > 0 ? (over ? 'enveloppe de ' + eur(p) + ' dépassée' : 'enveloppe ' + eur(p)) : share].filter(Boolean).join(' · '),
+          extra: '<div style="display:flex;align-items:center;gap:10px;padding:10px 0 4px;border-top:1px solid var(--line)"><label class="sm b" for="env-' + k.k + '" style="flex:1">Enveloppe (plafond)</label><input id="env-' + k.k + '" class="field num" style="width:110px;min-height:40px;text-align:right" type="text" inputmode="decimal" placeholder="—" data-k="plan-' + k.k + '" data-plan="' + k.k + '" value="' + esc(tr.plan[k.k] || '') + '"><span class="muted sm">€</span></div>',
+          addAct: 'new-exp-cat', addArg: k.k });
+      }).join('');
+      anyOpen = Object.keys(ui.openCats).some(function (k) { return ui.openCats[k]; });
+    }
+    var breakdown = '<div class="card pad"><div class="c-head" style="align-items:center"><h2 class="h2">Répartition</h2><button class="link" data-act="toggle-all-groups" data-arg="' + (anyOpen ? 'close' : 'open') + '">' + (anyOpen ? 'Tout replier' : 'Tout déplier') + '</button></div>' +
+      (c.hasStops ? '<div class="seg" style="margin-bottom:8px"><button class="' + (isStop ? '' : 'on') + '" data-act="bud-view" data-arg="cat">Par poste</button><button class="' + (isStop ? 'on' : '') + '" data-act="bud-view" data-arg="stop">Par étape</button></div>' : '') +
+      '<div>' + groupsHtml + '</div><p class="muted sm" style="margin:10px 0 0">Touchez un ' + (isStop ? 'lieu' : 'poste') + ' pour voir ses lignes.</p></div>';
 
     var filters = '<div class="hs">' + [['all', 'Tout'], ['prevu', 'Prévu'], ['reserve', 'Réservé'], ['paye', 'Payé']].map(function (f) { return '<button class="pill' + (ui.expFilter === f[0] ? ' on' : '') + '" data-act="exp-filter" data-arg="' + f[0] + '">' + f[1] + '</button>'; }).join('') +
       (c.hasStops ? '<span style="width:1px;background:var(--line-2);flex:0 0 auto;margin:4px 2px"></span>' + [{ id: 'all', name: 'Toutes étapes', color: 'var(--line-2)' }].concat(c.stopRows).map(function (s) { return '<button class="pill' + (ui.expStop === s.id ? ' on' : '') + '" data-act="exp-stop" data-arg="' + esc(s.id) + '"><span class="dot" style="background:' + s.color + '"></span>' + esc(s.name) + '</button>'; }).join('') : '') + '</div>';
@@ -648,6 +685,17 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
     var sum = rows.reduce(function (s, e) { return s + c.toEur(e); }, 0);
     var list = '<div class="card" style="padding:2px 14px">' + (rows.length ? rows.map(function (e) { return expRow(c, e, false); }).join('') : '<p class="muted" style="margin:16px 0">Rien dans ce filtre.</p>') + '</div>';
     return '<div class="screen">' + summary + conv + breakdown + '<div><div class="c-head" style="margin:4px 2px 8px"><h2 class="h2">Journal</h2><span class="num muted sm">' + pl(rows.length, 'ligne', 'lignes') + ' · ' + eur(sum) + '</span></div>' + filters + '</div>' + list + '</div>';
+  }
+  function expRowC(c, e, hide) {
+    var mo = money(c, e), s = ST[e.state] ? e.state : 'prevu', b = [];
+    if (e.date) b.push(fd(e.date)); else if (e.when) b.push(e.when);
+    if (hide !== 'cat') b.push(catOf(e.cat).l);
+    if (hide !== 'stop' && c.hasStops) b.push(c.stopName(c.sid(e)));
+    if (e.note) b.push(e.note);
+    return '<div class="li"><button class="li-main" style="padding:10px 0" data-act="open-exp" data-id="' + esc(e.id) + '"><span style="flex:1;min-width:0">' +
+      '<span style="display:flex;gap:8px;align-items:baseline"><span class="li-t" style="flex:1;min-width:0">' + esc(e.label) + '</span><span class="num ' + (mo.empty ? 'muted sm' : 'b') + '" style="white-space:nowrap">' + mo.main + '</span></span>' +
+      '<span style="display:flex;gap:8px;align-items:baseline"><span class="li-s ell" style="flex:1;min-width:0">' + esc(b.join(' · ')) + '</span>' + (mo.sub ? '<span class="num li-s" style="white-space:nowrap">' + mo.sub + '</span>' : '') + '</span></span></button>' +
+      '<button class="chip chip-s s-' + s + '" data-act="cycle-exp" data-id="' + esc(e.id) + '" aria-label="Statut ' + ST[s] + ', changer">' + ST[s] + '</button></div>';
   }
   function expRow(c, e, withDl) {
     var k = catOf(e.cat), mo = money(c, e), dl = withDl ? dlInfo(c, e) : null, s = ST[e.state] ? e.state : 'prevu';
@@ -936,6 +984,14 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
       case 'leg': ui.tab = 'prog'; ui.day = arg; ui.scrollDay = true; saveUi(); render(); try { window.scrollTo(0, 0); } catch (e) { } return;
       case 'day': ui.day = arg; ui.scrollDay = true; render(); return;
       case 'bud-view': ui.budView = arg; saveUi(); render(); return;
+      case 'toggle-cat': ui.openCats[arg] = !ui.openCats[arg]; render(); return;
+      case 'toggle-stop': ui.openStops[arg] = !ui.openStops[arg]; render(); return;
+      case 'toggle-all-groups':
+        if (arg === 'close') { ui.openCats = {}; ui.openStops = {}; }
+        else { CATS.forEach(function (k) { ui.openCats[k.k] = true; }); if (tr) { ui.openStops._ = true; tr.stops.forEach(function (x) { ui.openStops[x.id] = true; }); } }
+        render(); return;
+      case 'new-exp-cat': if (tr) openSheet('exp', Object.assign(newExpForm(tr, false), { cat: arg })); return;
+      case 'new-exp-stop': if (tr) openSheet('exp', Object.assign(newExpForm(tr, false), { stop: arg })); return;
       case 'exp-filter': ui.expFilter = arg; render(); return;
       case 'exp-stop': ui.expStop = arg; render(); return;
       case 'cycle-exp':
