@@ -317,18 +317,19 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
 .map-card{overflow:hidden}
 .map-slot{position:relative;height:232px;isolation:isolate;background:var(--map-bg)}
 .map-host{position:absolute!important;inset:0;z-index:0}
-.map-host .leaflet-container,.map-host.leaflet-container{background:var(--map-bg);font-family:var(--body);outline:none}
-.map-host .leaflet-control-attribution{font-size:10px;line-height:1.4;padding:0 6px;background:rgba(255,255,255,.72);color:#55636E;border-radius:6px 0 0 0}
-:root[data-theme="dark"] .map-host .leaflet-control-attribution{background:rgba(0,0,0,.5);color:#9AAAB6}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .map-host .leaflet-control-attribution{background:rgba(0,0,0,.5);color:#9AAAB6}}
-.map-host .leaflet-control-attribution a{color:inherit}
+.map-host{background:var(--map-bg);font-family:var(--body);overflow:hidden}
+.map-host canvas{outline:none}
+.map-host .maplibregl-ctrl-attrib{font-size:11px}
+.map-slot .maplibregl-ctrl-top-right{top:auto;bottom:0}
+.mapv .maplibregl-ctrl-top-right{top:calc(62px + env(safe-area-inset-top,0px))}
+.mk{line-height:0;cursor:pointer}
+.mk-chip,.map-slot .mk,.map-host.placing .mk{pointer-events:none}
+.map-host.placing canvas{cursor:crosshair}
 .map-open{position:absolute;inset:0;z-index:2;border:0;padding:0;background:transparent;cursor:pointer;display:flex;align-items:flex-start;justify-content:flex-end}
 .map-open:focus-visible{outline:2px solid var(--acc);outline-offset:-3px}
 .map-hint{margin:10px;width:36px;height:36px;border-radius:50%;background:var(--surface);color:var(--fg);display:inline-flex;align-items:center;justify-content:center;box-shadow:var(--float)}
 .map-msg{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center;font-size:14px;font-weight:600;color:var(--muted)}
-.rt{stroke:var(--route);fill:none}
-.pinw{background:none;border:0}
-.pin-g{display:flex;align-items:center;justify-content:center;width:100%;height:100%;transition:transform .2s}
+.pin-g{display:flex;align-items:center;justify-content:center;transition:transform .2s}
 .pin{width:28px;height:28px;flex:0 0 auto;border-radius:50%;background:var(--c);color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:17px;line-height:1;box-shadow:0 0 0 2.5px var(--surface),0 4px 10px -2px rgba(0,0,0,.45)}
 .pin+.pin{margin-left:-7px}
 .pin-g.sel{transform:scale(1.22)}
@@ -377,7 +378,7 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
 <script>
 (function () {
   'use strict';
-  var VERSION = '2.3', VDATE = '22 oct. 2026';
+  var VERSION = '2.3.1', VDATE = '22 oct. 2026';
   var $root = document.getElementById('root'), $sheet = document.getElementById('sheet-root'), $toast = document.getElementById('toast-root');
   var docEl = document.documentElement;
 
@@ -678,111 +679,150 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
     if (ui.sheet === 'stops' && !(a && $sheet.contains(a) && /INPUT|SELECT|TEXTAREA/.test(a.tagName))) renderSheet();
   }
 
-  /* ============ carte (Leaflet, chargé à la demande, une seule instance déplacée entre l'aperçu et le plein écran) ============ */
-  var MAP = { loading: null, map: null, host: null, tiles: null, style: '', layer: null, sig: '', fitKey: '', failed: false, st: null };
+  /* ============ carte : MapLibre + fond libre OpenFreeMap (sans clé), chargée à la demande ;
+     une seule instance, déplacée entre l'aperçu et le plein écran ============ */
+  var STYLE_L = 'https://tiles.openfreemap.org/styles/positron', STYLE_D = 'https://tiles.openfreemap.org/styles/dark';
+  var LABEL = ['coalesce', ['get', 'name:fr'], ['get', 'name:latin'], ['get', 'name_en'], ['get', 'name']];
+  var MAP = { loading: null, map: null, host: null, style: '', sig: '', fitKey: '', failed: false, st: null, markers: [], lines: { type: 'FeatureCollection', features: [] } };
   var RM = false; try { RM = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { }
   var $mapv = document.createElement('div'); $mapv.id = 'map-root'; document.body.appendChild($mapv);
-  function loadLeaflet() {
-    if (window.L && window.L.map) return Promise.resolve(window.L);
+  function loadMapLib() {
+    if (window.maplibregl) return Promise.resolve(window.maplibregl);
     if (MAP.loading) return MAP.loading;
     MAP.loading = new Promise(function (res, rej) {
-      var css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'vendor/leaflet.css'; document.head.appendChild(css);
-      var s = document.createElement('script'); s.src = 'vendor/leaflet.js';
-      s.onload = function () { res(window.L); };
-      s.onerror = function () { MAP.loading = null; s.remove(); rej(new Error('leaflet')); };
+      var css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'vendor/maplibre-gl.css'; document.head.appendChild(css);
+      var s = document.createElement('script'); s.src = 'vendor/maplibre-gl.js';
+      s.onload = function () { if (window.maplibregl) res(window.maplibregl); else { MAP.loading = null; rej(new Error('maplibre')); } };
+      s.onerror = function () { MAP.loading = null; s.remove(); rej(new Error('maplibre')); };
       document.head.appendChild(s);
     });
     return MAP.loading;
   }
-  function mapEnsure() {
-    if (MAP.map) return;
-    var Lf = window.L;
-    MAP.host = document.createElement('div'); MAP.host.className = 'map-host';
-    MAP.map = Lf.map(MAP.host, { zoomControl: false, attributionControl: true, zoomSnap: 0.25, minZoom: 2, maxZoom: 18, worldCopyJump: true });
-    MAP.map.attributionControl.setPrefix(false);
-    MAP.layer = Lf.layerGroup().addTo(MAP.map);
+  function mapCreate() {
+    var ml = window.maplibregl;
+    MAP.style = isDark() ? STYLE_D : STYLE_L;
+    MAP.map = new ml.Map({ container: MAP.host, style: MAP.style, center: [100.5, 13.7], zoom: 3, minZoom: 1, maxZoom: 17,
+      attributionControl: false, dragRotate: false, pitchWithRotate: false, touchPitch: false, fadeDuration: 120 });
+    MAP.map.touchZoomRotate.disableRotation();
+    MAP.map.addControl(new ml.AttributionControl({ compact: true }), 'top-right');
+    MAP.map.on('style.load', mapStyled);
     MAP.map.on('click', mapClick);
     MAP.map.on('zoomend', function () { var tr = currentTrip(); if (tr) mapDraw(ctxOf(tr)); });
+    MAP.map.on('error', function () { });
   }
-  function mapTiles(dark) {
-    var style = dark ? 'dark_all' : 'light_all';
-    if (MAP.style === style) return;
-    if (MAP.tiles) MAP.map.removeLayer(MAP.tiles);
-    MAP.tiles = window.L.tileLayer('https://{s}.basemaps.cartocdn.com/' + style + '/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19, crossOrigin: true, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>' }).addTo(MAP.map);
-    MAP.tiles.bringToBack();
-    MAP.style = style;
+  /* noms de lieux en français, sinon en alphabet latin ; la route du voyage par-dessus le fond */
+  function mapStyled() {
+    var m = MAP.map, ink = isDark() ? '#EEF3F6' : '#0F1E2A';
+    try {
+      (m.getStyle().layers || []).forEach(function (l) {
+        if (l.type !== 'symbol') return;
+        var tf = m.getLayoutProperty(l.id, 'text-field');
+        if (tf && /name/.test(JSON.stringify(tf))) m.setLayoutProperty(l.id, 'text-field', LABEL);
+      });
+    } catch (e) { }
+    try {
+      if (!m.getSource('carnet')) m.addSource('carnet', { type: 'geojson', data: MAP.lines });
+      else m.getSource('carnet').setData(MAP.lines);
+      [['carnet-solid', 'solid', null, 2.6], ['carnet-bateau', 'bateau', [2.6, 2.2], 2.6], ['carnet-avion', 'avion', [0, 2.2], 3.2]].forEach(function (L) {
+        if (!m.getLayer(L[0])) {
+          var paint = { 'line-color': ink, 'line-width': L[3], 'line-opacity': 0.92 };
+          if (L[2]) paint['line-dasharray'] = L[2];
+          m.addLayer({ id: L[0], type: 'line', source: 'carnet', filter: ['==', ['get', 'mode'], L[1]], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: paint });
+        } else m.setPaintProperty(L[0], 'line-color', ink);
+      });
+    } catch (e) { }
+  }
+  function mapTheme() {
+    var want = isDark() ? STYLE_D : STYLE_L;
+    if (MAP.style === want) return;
+    MAP.style = want; MAP.sig = '';
+    MAP.map.setStyle(want);
   }
   function mapInteractive(on) {
     var m = MAP.map;
-    ['dragging', 'touchZoom', 'doubleClickZoom', 'scrollWheelZoom', 'boxZoom', 'keyboard'].forEach(function (h) { if (m[h]) { if (on) m[h].enable(); else m[h].disable(); } });
+    ['dragPan', 'scrollZoom', 'boxZoom', 'keyboard', 'doubleClickZoom', 'touchZoomRotate'].forEach(function (h) { if (m[h]) { if (on) m[h].enable(); else m[h].disable(); } });
+    if (on) m.touchZoomRotate.disableRotation();
   }
   function mapData(c) {
     var tr = c.tr, now = c.inTrip ? stopFor(c.stops, c.today) : null;
-    var pts = c.stops.map(function (s, i) { return { s: s, n: i + 1, ll: hasLL(s) ? [s.lat, s.lng] : null }; }), segs = [];
+    var pts = c.stops.map(function (s, i) { return { s: s, n: i + 1, ll: hasLL(s) ? [s.lng, s.lat] : null }; }), segs = [];
     for (var i = 1; i < pts.length; i++) if (pts[i].ll && pts[i - 1].ll) segs.push({ a: pts[i - 1].ll, b: pts[i].ll, mode: modeOf(tr, pts[i].s, pts[i - 1].s) });
     return { pts: pts, segs: segs, now: now ? now.id : '' };
   }
   function mapDraw(c, force) {
-    var Lf = window.L, d = mapData(c), dark = isDark();
-    if (!MAP.map._loaded) return d;
-    var z = MAP.map.getZoom();
-    var sig = JSON.stringify([d.pts.map(function (p) { return [p.s.id, p.ll, p.s.color, p.n]; }), d.segs.map(function (g) { return g.mode; }), d.now, ui.mapOpen ? ui.mapSel : '', dark, Math.round(z * 4)]);
+    var ml = window.maplibregl, m = MAP.map, d = mapData(c);
+    if (!m) return d;
+    var z = m.getZoom();
+    var sig = JSON.stringify([d.pts.map(function (p) { return [p.s.id, p.ll, p.s.color, p.n]; }), d.segs.map(function (g) { return g.mode; }), d.now, ui.mapOpen ? ui.mapSel : '', Math.round(z * 4), MAP.style]);
     if (!force && sig === MAP.sig) return d;
-    MAP.sig = sig; MAP.layer.clearLayers();
-    var crs = Lf.CRS.EPSG3857;
+    MAP.sig = sig;
+    MAP.markers.forEach(function (mk) { mk.remove(); }); MAP.markers = [];
+    var feats = [];
     d.segs.forEach(function (g) {
-      var A = crs.project(Lf.latLng(g.a)), B = crs.project(Lf.latLng(g.b)), dx = B.x - A.x, dy = B.y - A.y, line = [], mid;
+      var A = ml.MercatorCoordinate.fromLngLat(g.a), B = ml.MercatorCoordinate.fromLngLat(g.b), dx = B.x - A.x, dy = B.y - A.y, line = [], mid;
       if (g.mode === 'avion') {
-        var C = Lf.point((A.x + B.x) / 2 - dy * 0.2, (A.y + B.y) / 2 + dx * 0.2);
-        for (var k = 0; k <= 40; k++) { var t = k / 40, u = 1 - t; line.push(crs.unproject(Lf.point(u * u * A.x + 2 * u * t * C.x + t * t * B.x, u * u * A.y + 2 * u * t * C.y + t * t * B.y))); }
+        var cx = (A.x + B.x) / 2 + dy * 0.2, cy = (A.y + B.y) / 2 - dx * 0.2;
+        for (var k = 0; k <= 40; k++) { var t = k / 40, u = 1 - t; line.push(new ml.MercatorCoordinate(u * u * A.x + 2 * u * t * cx + t * t * B.x, u * u * A.y + 2 * u * t * cy + t * t * B.y, 0).toLngLat().toArray()); }
         mid = line[20];
-      } else { line = [Lf.latLng(g.a), Lf.latLng(g.b)]; mid = crs.unproject(Lf.point((A.x + B.x) / 2, (A.y + B.y) / 2)); }
-      var far = MAP.map.project(g.a, z).distanceTo(MAP.map.project(g.b, z)) > 70;
-      Lf.polyline(line, { className: 'rt', weight: g.mode === 'avion' ? 3.2 : 2.6, dashArray: g.mode === 'avion' ? '0.1 7' : (g.mode === 'bateau' ? '7 6' : null), lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(MAP.layer);
-      var ang = Math.round(Math.atan2(dx, dy) * 180 / Math.PI);
-      if (far) Lf.marker(mid, { interactive: false, keyboard: false, zIndexOffset: -1000, icon: Lf.divIcon({ className: 'pinw', iconSize: [26, 26], html: '<span class="mchip">' + (g.mode === 'avion' ? plane(14, ang) : MODES[g.mode].ic(14)) + '</span>' }) }).addTo(MAP.layer);
+      } else { line = [g.a, g.b]; mid = new ml.MercatorCoordinate((A.x + B.x) / 2, (A.y + B.y) / 2, 0).toLngLat().toArray(); }
+      feats.push({ type: 'Feature', properties: { mode: g.mode === 'avion' || g.mode === 'bateau' ? g.mode : 'solid' }, geometry: { type: 'LineString', coordinates: line } });
+      var pa = m.project(g.a), pb = m.project(g.b);
+      if (Math.sqrt((pa.x - pb.x) * (pa.x - pb.x) + (pa.y - pb.y) * (pa.y - pb.y)) > 70) {
+        var ang = Math.round(Math.atan2(dx, -dy) * 180 / Math.PI), el = document.createElement('div');
+        el.className = 'mk mk-chip'; el.innerHTML = '<span class="mchip">' + (g.mode === 'avion' ? plane(14, ang) : MODES[g.mode].ic(14)) + '</span>';
+        MAP.markers.push(new ml.Marker({ element: el }).setLngLat(mid).addTo(m));
+      }
     });
+    MAP.lines = { type: 'FeatureCollection', features: feats };
+    try { var src = m.getSource('carnet'); if (src) src.setData(MAP.lines); } catch (e) { }
     var clusters = [];
     d.pts.forEach(function (p) {
       if (!p.ll) return;
-      var px = MAP.map.project(p.ll, z), hit = clusters.filter(function (cl) { return cl.px.distanceTo(px) < 30; })[0];
+      var px = m.project(p.ll), hit = clusters.filter(function (cl) { return Math.abs(cl.px.x - px.x) < 30 && Math.abs(cl.px.y - px.y) < 30; })[0];
       if (hit) hit.items.push(p); else clusters.push({ px: px, items: [p] });
     });
     clusters.forEach(function (cl) {
       var g = cl.items, ids = g.map(function (p) { return p.s.id; });
-      var sel = !!ui.mapOpen && ids.indexOf(ui.mapSel) >= 0, now = ids.indexOf(d.now) >= 0, w = 36 + (g.length - 1) * 21;
-      var m = Lf.marker(g[0].ll, { keyboard: false, zIndexOffset: sel ? 1000 : (now ? 500 : 0), title: g.map(function (p) { return p.n + '. ' + p.s.name; }).join(', '),
-        icon: Lf.divIcon({ className: 'pinw', iconSize: [w, 36], iconAnchor: [w / 2, 18], html: '<span class="pin-g' + (sel ? ' sel' : '') + (now ? ' now' : '') + '">' + g.map(function (p) { return '<span class="pin' + (p.s.id === d.now ? ' here' : '') + '" style="--c:' + p.s.color + '">' + p.n + '</span>'; }).join('') + '</span>' }) });
-      m.on('click', function (e) { if (!ui.mapOpen) return; if (ui.mapPlace) { mapClick(e); return; } var i = ids.indexOf(ui.mapSel); mapSelect(ids[(i + 1) % ids.length], true); });
-      m.setZIndexOffset((sel ? 1000 : (now ? 500 : 0)) + 100);
-      m.addTo(MAP.layer);
+      var sel = !!ui.mapOpen && ids.indexOf(ui.mapSel) >= 0, now = ids.indexOf(d.now) >= 0, el = document.createElement('div');
+      el.className = 'mk'; el.style.zIndex = sel ? 3 : (now ? 2 : 1);
+      el.setAttribute('title', g.map(function (p) { return p.n + '. ' + p.s.name; }).join(', '));
+      el.innerHTML = '<span class="pin-g' + (sel ? ' sel' : '') + '">' + g.map(function (p) { return '<span class="pin' + (p.s.id === d.now ? ' here' : '') + '" style="--c:' + p.s.color + '">' + p.n + '</span>'; }).join('') + '</span>';
+      el.addEventListener('click', function (ev) {
+        if (!ui.mapOpen || ui.mapPlace) return;
+        ev.stopPropagation();
+        var i = ids.indexOf(ui.mapSel); mapSelect(ids[(i + 1) % ids.length], true);
+      });
+      MAP.markers.push(new ml.Marker({ element: el }).setLngLat(g[0].ll).addTo(m));
     });
     return d;
   }
-  function mapFit(d, animate) {
-    var lls = d.pts.filter(function (p) { return p.ll; }).map(function (p) { return p.ll; });
-    if (!lls.length) { MAP.map.setView([18, 20], 2, { animate: false }); return; }
-    var full = !!ui.mapOpen;
-    MAP.map.fitBounds(window.L.latLngBounds(lls), full
-      ? { paddingTopLeft: [40, 96], paddingBottomRight: [40, mapCardsH() + 40], maxZoom: 11, animate: !!animate && !RM }
-      : { padding: [34, 34], maxZoom: lls.length === 1 ? 9 : 10, animate: false });
-  }
+  function mapTopH() { var el = document.querySelector('.mapv-top'); return el ? Math.round(el.getBoundingClientRect().bottom) + 26 : 30; }
   function mapCardsH() { var el = document.getElementById('mapv-cards'); return el ? el.offsetHeight + 12 : 20; }
+  function mapFit(d, animate) {
+    var ml = window.maplibregl, pts = d.pts.filter(function (p) { return p.ll; }).map(function (p) { return p.ll; });
+    if (!pts.length) { MAP.map.jumpTo({ center: [100.5, 13.7], zoom: 2 }); return; }
+    var b = new ml.LngLatBounds(pts[0], pts[0]); pts.forEach(function (p) { b.extend(p); });
+    var full = !!ui.mapOpen;
+    try {
+      MAP.map.fitBounds(b, full
+        ? { padding: { top: mapTopH(), bottom: mapCardsH() + 30, left: 44, right: 44 }, maxZoom: 11, duration: animate && !RM ? 700 : 0 }
+        : { padding: 34, maxZoom: pts.length === 1 ? 9 : 10, duration: 0 });
+    } catch (e) { MAP.map.jumpTo({ center: pts[0], zoom: 6 }); }
+  }
   function mapSelect(id, scrollCard) {
-    var tr = currentTrip(); if (!tr || !MAP.map) return;
+    var tr = currentTrip(), m = MAP.map; if (!tr || !m) return;
     ui.mapSel = id;
     var d = mapDraw(ctxOf(tr)), p = d.pts.filter(function (x) { return x.s.id === id; })[0];
     if (p && p.ll) {
-      var H = MAP.map.getSize().y, off = H / 2 - (70 + H - mapCardsH()) / 2;
-      var z = Math.max(MAP.map.getZoom(), 11), pt = MAP.map.project(p.ll, z).add([0, Math.max(0, off)]);
-      MAP.map.flyTo(MAP.map.unproject(pt, z), z, { animate: !RM, duration: 0.8 });
+      var H = m.getContainer().clientHeight, off = (mapTopH() + H - mapCardsH()) / 2 - H / 2;
+      m.flyTo({ center: p.ll, zoom: Math.max(m.getZoom(), 11), offset: [0, Math.round(off)], duration: RM ? 0 : 900 });
     }
     if (scrollCard) { var el = document.getElementById('sc-' + id); if (el) { MAP.lock = performance.now() + 900; el.scrollIntoView({ behavior: RM ? 'auto' : 'smooth', inline: 'center', block: 'nearest' }); } }
   }
   function mapClick(e) {
     if (!ui.mapOpen || !ui.mapPlace) return;
     var tr = currentTrip(), s = tr && find(tr.stops, ui.mapPlace); if (!s) return;
-    var ll = e.latlng.wrap();
+    var ll = e.lngLat.wrap();
     s.lat = Math.round(ll.lat * 1e5) / 1e5; s.lng = Math.round(ll.lng * 1e5) / 1e5; s.geo = 'manual'; s.place = '';
     ui.mapPlace = null; ui.mapSel = s.id; save(); render();
     toast('« ' + s.name + ' » placé sur la carte');
@@ -790,17 +830,20 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
   function mapMount() {
     if (!document.getElementById(ui.mapOpen ? 'mapv-host' : 'map-slot')) return;
     var tr0 = currentTrip(); if (!tr0 || (!ui.mapOpen && !tr0.stops.some(hasLL))) return;
-    loadLeaflet().then(function () {
+    loadMapLib().then(function () {
       var tgt = document.getElementById(ui.mapOpen ? 'mapv-host' : 'map-slot'), tr = currentTrip();
       if (!tgt || !tr) return;
-      mapEnsure();
+      if (!MAP.host) { MAP.host = document.createElement('div'); MAP.host.className = 'map-host'; }
       var moved = MAP.host.parentNode !== tgt;
-      if (moved) { tgt.insertBefore(MAP.host, tgt.firstChild); MAP.map.invalidateSize({ animate: false, pan: false }); }
+      if (moved) tgt.insertBefore(MAP.host, tgt.firstChild);
+      if (!MAP.map) { try { mapCreate(); } catch (e) { if (!MAP.failed) { MAP.failed = true; render(); } return; } }
+      else if (moved) MAP.map.resize();
+      MAP.host.classList.toggle('placing', !!(ui.mapOpen && ui.mapPlace));
       mapInteractive(!!ui.mapOpen);
-      mapTiles(isDark());
+      mapTheme();
       var d = mapData(ctxOf(tr));
       var fk = (ui.mapOpen ? 'full|' : 'card|') + tr.id + '|' + d.pts.map(function (p) { return p.ll ? p.ll.join(',') : '-'; }).join(';');
-      if (fk !== MAP.fitKey || !MAP.map._loaded) { MAP.fitKey = fk; mapFit(d, !moved); }
+      if (fk !== MAP.fitKey) { MAP.fitKey = fk; mapFit(d, !moved); }
       mapDraw(ctxOf(tr));
       if (ui.mapOpen && ui.mapFocus) { var f = ui.mapFocus; ui.mapFocus = null; setTimeout(function () { if (ui.mapOpen) mapSelect(f, true); }, RM ? 0 : 350); }
     }, function () { if (!MAP.failed) { MAP.failed = true; render(); } });
@@ -934,7 +977,7 @@ button:focus-visible,.field:focus-visible,.ck:focus-visible{outline:2px solid va
     }
 
     var placed = c.stops.filter(hasLL).length, pending = c.stops.some(geoPending);
-    var mapMsg = MAP.failed ? 'Carte indisponible hors connexion' : (placed ? '' : (pending ? (navigator.onLine === false ? 'La carte se dessinera une fois en ligne' : 'Placement des étapes sur la carte…') : 'Touchez pour placer vos étapes sur la carte'));
+    var mapMsg = MAP.failed ? (navigator.onLine === false ? 'Carte indisponible hors connexion' : 'Carte indisponible pour le moment') : (placed ? '' : (pending ? (navigator.onLine === false ? 'La carte se dessinera une fois en ligne' : 'Placement des étapes sur la carte…') : 'Touchez pour placer vos étapes sur la carte'));
     var route = c.hasStops ? sec('La route', '<button class="link" data-act="map-open">Voir la carte</button>', '<div class="card map-card"><div class="map-slot" id="map-slot">' + (mapMsg ? '<div class="map-msg">' + mapMsg + '</div>' : '') +
       '<button class="map-open" data-act="map-open" aria-label="Ouvrir la carte du voyage"><span class="map-hint">' + IC_EXPAND + '</span></button></div><div class="hs legs">' + c.stops.map(function (x, i) {
       return '<button class="leg" style="flex-grow:' + Math.max(1, x.nights) + '" data-act="leg" data-arg="' + esc(x.start) + '"><span style="display:flex;align-items:center"><span class="leg-n" style="background:' + x.color + '">' + (i + 1) + '</span><span style="flex:1;height:4px;background:' + x.color + ';border-radius:0 99px 99px 0"></span></span><span><span class="b" style="display:block;font-size:15px;color:var(--fg);white-space:nowrap">' + esc(x.name) + '</span><span class="muted" style="display:block;font-size:13px">' + pl(x.nights, 'nuit', 'nuits') + '</span></span></button>';
